@@ -66,6 +66,8 @@ type Correction struct {
 	// For example, grace and grant have a prefix_len of 3 as they both share `gra` at the beginning.
 	// Higher is better.
 	prefix_len uint8
+	// Frequency of use of the word in an English text corpus
+	frequency uint
 	// Sum of the distance between each character in the original and corrected word. Lower is better.
 	key_len uint8
 	// Weight of word correction. Higher values mean the correction is closer to the original word.
@@ -92,6 +94,11 @@ func search_lev(n *txt.Node, s, b string, limit uint8, prev ...Correction) []Cor
 
 			if v.Done && len(v.Kids) == 0 {
 				if lev <= limit {
+					freq, err := strconv.Atoi(string(v.Data))
+					if err != nil {
+						freq = 0
+					}
+					prev = append(prev, Correction{ld: lev, Word: b, Weight: 0, frequency: uint(freq)})
 				}
 
 				continue
@@ -234,7 +241,9 @@ func (c *Correction) weigh(original string) {
 	if c.prefix_len == 0 {
 		wprefix_len = 0
 	}
+	var wfrequency float32 = FREQUENCY_WEIGHT / float32(c.frequency)
 
+	c.Weight = float32(10 / (wld + wkey_len + wprefix_len + wfrequency))
 	if c.Weight > 1 {
 		c.Weight = 0.999
 	}
