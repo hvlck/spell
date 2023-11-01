@@ -94,15 +94,15 @@ func search_lev(n *txt.Node, s, b string, limit float64, prev ...Correction) []C
 		return prev
 	} else {
 		for rn, v := range n.Kids {
-			lev := ld(b, s)
+			lev := levenshtein_with_operations(b, s)
 
 			if v.Done && len(v.Kids) == 0 {
-				if lev <= limit {
-					freq, err := strconv.Atoi(string(v.Data))
+				if lev[0] <= limit {
+					freq, err := strconv.ParseFloat(string(v.Data), 64)
 					if err != nil {
 						freq = 0
 					}
-					prev = append(prev, Correction{ld: lev, Word: b, Weight: 0, frequency: uint(freq)})
+					prev = append(prev, Correction{ld: lev, Word: b, Weight: 0, frequency: freq})
 				}
 
 				continue
@@ -144,8 +144,7 @@ var keys = [][]rune{
 var all_keys = make([]rune, 0, 13*4)
 
 // Returns the absolute value.
-func abs(x int) int {
-	y := 0
+func abs[T int | int8 | uint8](x T) T {
 	var y T = 0
 	if x < y {
 		return y - x
@@ -154,8 +153,11 @@ func abs(x int) int {
 }
 
 // Returns the max of the two numbers
-	} else {
 func max[T int8 | uint8 | int | float64](numbers ...T) T {
+	var highest T = 0
+	for _, num := range numbers {
+		if num > highest {
+			highest = num
 		}
 	}
 
@@ -164,8 +166,8 @@ func max[T int8 | uint8 | int | float64](numbers ...T) T {
 
 // Returns the number of keys away `t` is from `o`.
 // This is used as a measure of accidental typos, e.g. `jat` when the intention was `hat`.
-func KeyProximity(o, t rune) uint8 {
-	if o == t {
+// Case is also handled; if the two cases differ, the final score is incremented by 1.
+func KeyProximity(original, target rune) uint8 {
 	if original == target {
 		return 0
 	}
@@ -181,15 +183,18 @@ func KeyProximity(o, t rune) uint8 {
 	// column
 	cO := 0
 
+	// target row/col
 	rT := 0
 	cT := 0
+
 	for idx, v := range all_keys {
 		idx += 1
-		if v == o {
+		if v == unicode.ToLower(original) {
 			cO = idx / 13
 			rO = idx - cO*13
 		}
 
+		if v == unicode.ToLower(target) {
 			cT = idx / 13
 			rT = idx - cT*13
 		}
@@ -200,8 +205,13 @@ func KeyProximity(o, t rune) uint8 {
 
 	var key_case uint8 = 0
 	original_is_lower := unicode.ToLower(original) == original
+	target_is_lower := unicode.ToLower(target) == target
+	if original_is_lower != target_is_lower {
+		key_case = 1
+	}
+
 	// largest value, no trig
-	return max(colDiff, rowDiff)
+	return uint8(max(colDiff, rowDiff)) + key_case
 }
 
 const (
@@ -277,22 +287,37 @@ func (c *Correction) weigh(original string) {
 		key_len += uint8(len(c.Word) - len(original))
 	}
 
+	magic_weight := 0.0
 	c.key_len = key_len
 	c.prefix_len = PrefixLength(c.Word, original)
 
-	var wld float32 = float32(c.ld) * LEV_WEIGHT
-	var wkey_len float32 = float32(c.key_len) * KEYDIST_WEIGHT
-	var wprefix_len float32 = PREFIX_WEIGHT / float32(c.prefix_len)
-	if c.prefix_len == 0 {
-		wprefix_len = 0
-	}
-	var wfrequency float32 = FREQUENCY_WEIGHT / float32(c.frequency)
+	c.suffix_len = PrefixLength(reverse(c.Word), reverse(original))
 
-	c.Weight = float32(10 / (wld + wkey_len + wprefix_len + wfrequency))
-	if c.Weight > 1 {
-		c.Weight = 0.999
+	var wld_div float64 = 1
+	for i := 0; i < len(c.ld); i++ {
+		w := c.ld[i] * lev_weights[i]
+		if w != 0 {
+			wld_div *= w
+		}
 	}
+	var wld float64 = 1 / wld_div
+
+	if c.ld[0] == 0 {
+		magic_weight += math.Inf(1)
+	}
+
+	var wkey_len float64 = KEYDIST_WEIGHT / (float64(c.key_len))
+	var wprefix_len float64 = PREFIX_WEIGHT * float64(c.prefix_len)
+	var wsuffix_len float64 = SUFFIX_WEIGHT * float64(c.suffix_len)
+
+	if wprefix_len == wsuffix_len {
+		magic_weight += 25
+	}
+
+	var wfrequency float64 = FREQUENCY_WEIGHT * c.frequency
 	var wmatches float64 = MATCHES_WEIGHT * SharedCharacters(original, c.Word)
+
+	c.Weight = wld + wkey_len + wprefix_len + wfrequency + wmatches + wsuffix_len + magic_weight
 }
 
 // Returns all matches in the given trie within `target` edit distances of `s`. Max is the maximum number of corrections
@@ -315,17 +340,15 @@ func PartialMatch(n *txt.Node, s string, target float64, max int) []Correction {
 
 		if v.Weight >= lim {
 			// res is filled
-			if n := res[last]; len(n.Word) != 0 && n.ld != 0 {
+			if n := res[last]; len(n.Word) != 0 && n.ld[0] != 0 {
 				// search for element with lowest weight, replace it
 				for i, k := range res {
 					// levenshtein and weight of word being examined is less than word currently in final results
-					if v.Weight > k.Weight && v.ld <= target {
-						// t := time.Now()
+					if v.Weight > k.Weight && v.ld[0] <= target {
 						res[i] = v
 						sort.Slice(res, func(i, j int) bool {
 							return res[i].Weight < res[j].Weight
 						})
-						// fmt.Println(time.Since(t))
 						break
 					}
 				}
@@ -442,7 +465,129 @@ func levenshtein(a, b string) float64 {
 
 	return result
 }
+
+func levenshtein_with_operations(a, b string) [4]float64 {
+	results := [4]float64{0, 0, 0, 0}
+
+	// basic cases - empty string edit distance equal to length of other string b/c only n insertions needed
+	if a == "" || b == "" {
+		return [4]float64{(float64(max(len(a), len(b))))}
 	}
 
-	return uint8(current)
+	// same string, no edit distance
+	if a == b {
+		return results
+	}
+
+	lenA := len(a)
+	lenB := len(b)
+
+	// matrix of levenshtein distances between each substring
+	matrix := make([][]int, lenA+1)
+	// operations
+	// 1 - substitution
+	// 2 - insertion/deletion
+	// 3 - transposition
+	ops := make([][]int, lenA+1)
+
+	// fill matrix w/ initial table values
+	for i := range matrix {
+		matrix[i] = make([]int, lenB+1)
+		matrix[i][0] = i
+		ops[i] = make([]int, lenB+1)
+		ops[i][0] = 1
+	}
+
+	for i := range matrix[0] {
+		matrix[0][i] = i
+		ops[0][i] = 1
+	}
+
+	for i := 1; i < lenA+1; i++ {
+		for j := 1; j < lenB+1; j++ {
+			cost := 0
+			// not the same character
+			if a[i-1] != b[j-1] {
+				cost = 1
+			}
+
+			ins := matrix[i][j-1] + 1
+			del := matrix[i-1][j] + 1
+			sub := matrix[i-1][j-1] + cost
+
+			matrix[i][j] = min(ins, del, sub)
+
+			// calculate if transposition can be used
+			var trans int = -1
+			if (i > 1 && j > 1) && a[i-2] == b[j-1] && a[i-1] == b[j-2] {
+				trans = matrix[i-2][j-2] + cost
+				matrix[i][j] = min(matrix[i][j], trans)
+			}
+
+			m := matrix[i][j]
+			switch {
+			// substitution
+			case m == sub && cost == 1:
+				ops[i][j] = 1
+			// insertion
+			case m == ins:
+				ops[i][j] = 2
+			// deletion
+			// insertions are combined w/ deletions in final count, but are retained here so that backtracking can work properly
+			case m == del:
+				ops[i][j] = 3
+			// transposition
+			case m == trans:
+				ops[i][j] = 4
+			}
+		}
+	}
+	results[0] = float64(matrix[lenA][lenB])
+
+	for lenA > -1 || lenB > -1 {
+		// for strings w/ different sizes, ensures algorithm will run down entire length of array rather than quitting once we iterate over
+		// the length of one of the strings
+		decA := 1
+		decB := 1
+		if lenA == 0 {
+			decA = 0
+		}
+
+		if lenB == 0 {
+			decB = 0
+		}
+
+		if (decB == 0) && decA == 0 {
+			break
+		}
+
+		op := ops[lenA][lenB]
+		switch op {
+		case 1:
+			results[1]++
+			lenA -= decA
+			lenB -= decB
+		case 2:
+			results[2]++
+			lenB -= decB
+			if lenB == 0 {
+				lenA -= decA
+			}
+		case 3:
+			results[2]++
+			lenA -= decA
+			if lenA == 0 {
+				lenB -= decB
+			}
+		case 4:
+			results[3]++
+			lenA -= decA * 2
+			lenB -= decB * 2
+		default:
+			lenA -= decA
+			lenB -= decB
+		}
+	}
+
+	return results
 }
