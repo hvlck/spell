@@ -5,7 +5,6 @@ import (
 	"math"
 	"sort"
 	"strconv"
-	"strings"
 	"unicode"
 
 	txt "github.com/hvlck/txt"
@@ -60,6 +59,7 @@ type Correction struct {
 	// For example, grace and grant have a prefix_len of 3 as they both share `gra` at the beginning.
 	// Higher is better.
 	prefix_len uint8
+	suffix_len uint8
 	// Frequency of use of the word in an English text corpus
 	frequency float64
 	// Sum of the distance between each character in the original and corrected word. Lower is better.
@@ -76,6 +76,7 @@ func (c *Correction) Metrics() map[string]float64 {
 		"transpositions":  c.ld[3],
 		"frequency":       c.frequency,
 		"prefix-length":   float64(c.prefix_len),
+		"suffix-length":   float64(c.suffix_len),
 		"keyboard-length": float64(c.key_len),
 	}
 }
@@ -94,9 +95,6 @@ func search_lev(n *txt.Node, s, b string, limit float64, prev ...Correction) []C
 	} else {
 		for rn, v := range n.Kids {
 			lev := ld(b, s)
-			// if lev > limit {
-			// 	continue
-			// }
 
 			if v.Done && len(v.Kids) == 0 {
 				if lev <= limit {
@@ -148,6 +146,7 @@ var all_keys = make([]rune, 0, 13*4)
 // Returns the absolute value.
 func abs(x int) int {
 	y := 0
+	var y T = 0
 	if x < y {
 		return y - x
 	}
@@ -155,18 +154,19 @@ func abs(x int) int {
 }
 
 // Returns the max of the two numbers
-func max(x, y int) uint8 {
-	if x > y {
-		return uint8(x)
 	} else {
-		return uint8(y)
+func max[T int8 | uint8 | int | float64](numbers ...T) T {
+		}
 	}
+
+	return highest
 }
 
 // Returns the number of keys away `t` is from `o`.
 // This is used as a measure of accidental typos, e.g. `jat` when the intention was `hat`.
 func KeyProximity(o, t rune) uint8 {
 	if o == t {
+	if original == target {
 		return 0
 	}
 
@@ -190,28 +190,67 @@ func KeyProximity(o, t rune) uint8 {
 			rO = idx - cO*13
 		}
 
-		if v == t {
 			cT = idx / 13
 			rT = idx - cT*13
 		}
-	}
-	if o == 'b' {
-		fmt.Println(rO, cO, rT, cT)
 	}
 
 	rowDiff := abs(rT - rO)
 	colDiff := abs(cT - cO)
 
+	var key_case uint8 = 0
+	original_is_lower := unicode.ToLower(original) == original
 	// largest value, no trig
 	return max(colDiff, rowDiff)
 }
 
 const (
-	KEYDIST_WEIGHT   = 200
-	PREFIX_WEIGHT    = 5
-	LEV_WEIGHT       = 0.0001
-	FREQUENCY_WEIGHT = 100
+	LEV_WEIGHT       = 1e-5
+	LEV_INDEL_WEIGHT = 1.0
+	LEV_SUB_WEIGHT   = 10.0
+	LEV_SWAP_WEIGHT  = .1
+
+	KEYDIST_WEIGHT   = 20
+	PREFIX_WEIGHT    = 1
+	SUFFIX_WEIGHT    = PREFIX_WEIGHT
+	FREQUENCY_WEIGHT = 10
+	MATCHES_WEIGHT   = 1
 )
+
+var lev_weights = map[int]float64{
+	0: LEV_WEIGHT,
+	1: LEV_SUB_WEIGHT,
+	2: LEV_INDEL_WEIGHT,
+	3: LEV_SWAP_WEIGHT,
+}
+
+// calculates the number of characters two strings share
+// characters match if the character and index of the character are the same in both strings
+// matching characters do not have to be continuous; e.g. the words
+// test        tertiary
+// have 3 shared characters (t, e, and t again)
+func SharedCharacters(original, target string) float64 {
+	matches := 0.0
+
+	length := min(len(original), len(target))
+
+	for i := 0; i < length; i++ {
+		if original[i] == target[i] {
+			matches += 1
+		}
+	}
+
+	return matches
+}
+
+// reverses a string
+func reverse(s string) string {
+	res := ""
+	for _, v := range s {
+		res = string(v) + res
+	}
+	return res
+}
 
 // Weighs a given correction for the provided original string.
 // todo: improvements to waiting algorithm, documentation
@@ -253,13 +292,14 @@ func (c *Correction) weigh(original string) {
 	if c.Weight > 1 {
 		c.Weight = 0.999
 	}
+	var wmatches float64 = MATCHES_WEIGHT * SharedCharacters(original, c.Word)
 }
 
 // Returns all matches in the given trie within `target` edit distances of `s`. Max is the maximum number of corrections
 // to return. Exact matches will have a weight of +Inf.
 // todo: -1 value for `max` to include all matches
 func PartialMatch(n *txt.Node, s string, target float64, max int) []Correction {
-	f := search_lev(n, strings.ToLower(s), "", target)
+	f := search_lev(n, s, "", target)
 
 	var lim float64 = 0
 	res := make([]Correction, max)
@@ -289,6 +329,7 @@ func PartialMatch(n *txt.Node, s string, target float64, max int) []Correction {
 						break
 					}
 				}
+
 			} else if last < max {
 				res[last] = v
 				if last+1 < max {
@@ -305,8 +346,8 @@ func PartialMatch(n *txt.Node, s string, target float64, max int) []Correction {
 	return res
 }
 
-// returns the minimum of a function
-func min(v ...uint8) uint8 {
+// returns the minimum of a set of numbers
+func min[T int | uint8 | float64](v ...T) T {
 	m := v[0]
 
 	for _, k := range v {
