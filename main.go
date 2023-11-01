@@ -2,26 +2,24 @@ package spell
 
 import (
 	"bytes"
-	"fmt"
-	"io/ioutil"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	txt "github.com/hvlck/txt"
 )
 
-// Loads the dictionary words list
-func loadDict() ([][]byte, error) {
-	b, err := ioutil.ReadFile("./data/words.txt")
-	if err != nil {
-		return nil, nil
-	}
+// go:embed ./data/words.txt
+var dict_file []byte
 
-	return bytes.Split(b, []byte("\n")), nil
+// Loads the dictionary words list
+func loadDict() [][]byte {
+	return bytes.Split(dict_file, []byte("\n"))
 }
 
-var dict, dictErr = loadDict()
+var dict = loadDict()
 
 // Generates a list of spelling corrections for the provided `word`.
 // `lim` is the maximum levenshtein distance away for a correction to be returned (inclusive)

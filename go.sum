@@ -1,2 +1,6 @@
+github.com/cheynewallace/tabby v1.1.1 h1:JvUR8waht4Y0S3JF17G6Vhyt+FRhnqVCkk8l4YrOU54=
+github.com/cheynewallace/tabby v1.1.1/go.mod h1:Pba/6cUL8uYqvOc9RkyvFbHGrQ9wShyrn6/S/1OYVys=
 github.com/hvlck/txt v0.0.0-20220808013555-61d867c9885b h1:GNpUgaHjF1hjCrlEYJf0blfHGKNil2pFd3vzfCgFN/I=
 github.com/hvlck/txt v0.0.0-20220808013555-61d867c9885b/go.mod h1:tlhO/diACEmSMjXeK+Sp7swRMXthfsXGz4lX2BT+M50=
+golang.org/x/text v0.13.0 h1:ablQoSUd0tRdKxZewP80B+BaqeKJuVhuRxj/dkrun3k=
+golang.org/x/text v0.13.0/go.mod h1:TvPlkZtksWOMsz7fbANvkp4WM8x/WCo/om8BMLbz+aE=
