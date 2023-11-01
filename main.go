@@ -30,24 +30,20 @@ var dict = loadDict()
 // e.g. with the input `vad`
 // `tad` and `bad` are both options, but the "b" in `bad` is closer physically on the keyboard than the "t" in
 // `tab`, and so would be the better choice
-func Correct(word string, lim uint8) (map[string]uint8, error) {
-	if dictErr != nil {
-		return nil, dictErr
-	}
-
+func Correct(word string, lim float64) map[string]float64 {
 	// all found matches
-	matches := map[string]uint8{}
+	matches := map[string]float64{}
 
 	for i := 0; i < len(dict); i++ {
 		// levenshtein distance of correction
-		l := ld(word, string(dict[i]))
+		l := levenshtein(word, string(dict[i]))
 		if l <= lim {
 			matches[string(dict[i])] = l
 			lim = l
 		}
 	}
 
-	return matches, nil
+	return matches
 }
 
 type Dict struct {
@@ -59,21 +55,33 @@ type Correction struct {
 	// Corrected word
 	Word string
 	// Levenshtein distance from original. Lower is closer.
-	ld uint8
+	ld [4]float64
 	// Number of characters that both words share at the beginning.
 	// For example, grace and grant have a prefix_len of 3 as they both share `gra` at the beginning.
 	// Higher is better.
 	prefix_len uint8
 	// Frequency of use of the word in an English text corpus
-	frequency uint
+	frequency float64
 	// Sum of the distance between each character in the original and corrected word. Lower is better.
 	key_len uint8
 	// Weight of word correction. Higher values mean the correction is closer to the original word.
-	Weight float32
+	Weight float64
+}
+
+func (c *Correction) Metrics() map[string]float64 {
+	return map[string]float64{
+		"levenshtein":     c.ld[0],
+		"ins/del":         c.ld[1],
+		"subs":            c.ld[2],
+		"transpositions":  c.ld[3],
+		"frequency":       c.frequency,
+		"prefix-length":   float64(c.prefix_len),
+		"keyboard-length": float64(c.key_len),
+	}
 }
 
 // Searches for all words in the trie within a fixed `limit` edit distance away from the original string `s`.
-func search_lev(n *txt.Node, s, b string, limit uint8, prev ...Correction) []Correction {
+func search_lev(n *txt.Node, s, b string, limit float64, prev ...Correction) []Correction {
 	if n == nil {
 		return make([]Correction, 0)
 	}
@@ -210,7 +218,7 @@ const (
 func (c *Correction) weigh(original string) {
 	// todo: sometimes this returns true for multiple values, and occassionally doesn't work at all
 	if c.Word == original {
-		c.Weight = 1
+		c.Weight = math.Inf(1)
 		return
 	}
 
@@ -248,17 +256,18 @@ func (c *Correction) weigh(original string) {
 }
 
 // Returns all matches in the given trie within `target` edit distances of `s`. Max is the maximum number of corrections
-// to return.
+// to return. Exact matches will have a weight of +Inf.
 // todo: -1 value for `max` to include all matches
-func PartialMatch(n *txt.Node, s string, target uint8, max int) []Correction {
+func PartialMatch(n *txt.Node, s string, target float64, max int) []Correction {
 	f := search_lev(n, strings.ToLower(s), "", target)
 
-	var lim float32 = 0
+	var lim float64 = 0
 	res := make([]Correction, max)
 
 	last := 0
 	for _, v := range f {
 		v.weigh(s)
+
 		// first element
 		if lim == 0 {
 			lim = v.Weight
@@ -313,47 +322,52 @@ func min(v ...uint8) uint8 {
 // based in part on https://rosettacode.org/wiki/Levenshtein_distance#Go, some modifications made to use one-dimensional array
 // this version usually takes about half the time as the second version, and usually less than half the time of the first version on RosettaCode
 // todo: add swap variant (e.g. `liek` -> `like`)
-func ld(a, b string) uint8 {
+func levenshtein(a, b string) float64 {
 	if a == "" {
-		return uint8(len(b))
+		return float64(len(b))
 	}
+
 	if b == "" {
-		return uint8(len(a))
+		return float64(len(a))
 	}
+
 	if a == b {
 		return 0
 	}
 
 	// row is the previous row in the LD table (contains top right at current index and top left at current index - 1)
-	row := make([]uint8, len(a)+1)
-	for i := range row {
-		row[i] = uint8(i)
+	prev_row := make([]uint8, len(a)+1)
+	for i := range prev_row {
+		prev_row[i] = uint8(i)
 	}
 
+	result := 0.0
 	// first characters aren't the same
 	var current uint8
 
 	// bottom left, starts at 1
 	var bl uint8
+
 	// go through columns first
 	for i := 1; i <= len(b); i++ {
-		// previous top left - used for if letters are the same
-		ptl := uint8(i - 1)
+		// previous top left - used if letters are the same
+
 		// set first value of previous row equal to ptl
-		row[0] = ptl
+		prev_row[0] = uint8(i)
 		current = 0
 
 		// top left
 		var tl uint8
 		// top right
 		var tr uint8
+		// bottom left
 		bl = uint8(i)
 
 		// go through each character in the row
 		for j := 1; j <= len(a); j++ {
 			// set top right equal to the value at
-			tr = row[j]
-			tl = ptl
+			tr = prev_row[j]
+			tl = prev_row[j-1]
 
 			// in first row of array, so top values should be equal to index of item (e.g. [0 1 2 3 4 5])
 			// value of top right should then be the value of the array at the index in the current loop
@@ -365,15 +379,28 @@ func ld(a, b string) uint8 {
 			if a[j-1] == b[i-1] {
 				current = tl
 			} else {
-				// characters are different - take minimum of the three, add one operation
 				current = min(tl, tr, bl) + 1
+
+				// todo: verify this works correctly - hard to reason about
+				if (j < len(a) && i < len(b)) && (j+1 < len(a) && i+1 < len(b)) {
+					// transpositions
+					// bounds check for transposition indexing
+					if a[j-1] == b[i] && a[j] == b[i-1] {
+						current = tl
+					}
+				}
 			}
 
 			// set the previous top left value equal to
-			ptl = row[j]
-			row[j] = current
+			prev_row[j] = current
 			bl = current
 		}
+
+		result = float64(current)
+	}
+
+	return result
+}
 	}
 
 	return uint8(current)
